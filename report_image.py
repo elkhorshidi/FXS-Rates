@@ -88,27 +88,54 @@ def make_png(result,market,market_time,market_source,volume_usd):
     latin_normal,latin_bold=latin_font_set("Regular"),latin_font_set("Bold")
     def font(size,heavy=False,latin=False):
         return (latin_bold if heavy else latin_normal)[size] if latin else (bold if heavy else normal)[size]
-    def width(s,sz,heavy=False,direction="ltr",latin=False):
-        try:return d.textlength(str(s),font=font(sz,heavy,latin=latin),direction=direction)
-        except (ValueError,TypeError):return d.textlength(str(s),font=font(sz,heavy,latin=latin))
+    # Some Streamlit Cloud Pillow builds lack libraqm. Passing direction="rtl"
+    # to textlength() there raises KeyError (not ValueError!). Shape manually
+    # whenever libraqm is absent; only supply `direction` when it is supported.
+    has_raqm = bool(features.check_feature("raqm"))
+
+    def _shape_rtl(s: str) -> str:
+        try:
+            import arabic_reshaper
+            from bidi.algorithm import get_display
+            return get_display(arabic_reshaper.reshape(s))
+        except (ImportError, ValueError, KeyError):
+            return s
+
+    def width(s, sz, heavy=False, direction="ltr", latin=False):
+        value = str(s)
+        f = font(sz, heavy, latin=latin)
+        if direction == "rtl" and not has_raqm:
+            value = _shape_rtl(value)
+        try:
+            return d.textlength(value, font=f, **({"direction": direction} if has_raqm else {}))
+        except (KeyError, ValueError, TypeError, OSError):
+            # Guard against partial/unsupported libraqm installations too.
+            if direction == "rtl" and has_raqm:
+                value = _shape_rtl(str(s))
+            return d.textlength(value, font=f)
+
     def fa(s,x,y,sz=24,color=TEXT,heavy=False,min_x=0):
         s=str(s)
         f=font(sz,heavy)
         while sz>17 and x-width(s,sz,heavy,"rtl")<min_x:
-            sz-=1;f=font(sz,heavy)
-        if features.check_feature("raqm"):
-            d.text((x,y),s,font=f,fill=color,direction="rtl",anchor="ra")
-        else:
-            # Pillow builds without RAQM: use bundled Python libraries to shape, no font files.
+            sz-=1; f=font(sz,heavy)
+        if has_raqm:
             try:
-                import arabic_reshaper
-                from bidi.algorithm import get_display
-                shaped=get_display(arabic_reshaper.reshape(s))
-            except ImportError:shaped=s
-            d.text((x-width(shaped,sz,heavy),y),shaped,font=f,fill=color)
+                d.text((x,y),s,font=f,fill=color,direction="rtl",anchor="ra")
+                return
+            except (KeyError, ValueError, TypeError, OSError):
+                pass
+        shaped=_shape_rtl(s)
+        d.text((x-width(shaped,sz,heavy,"ltr"),y),shaped,font=f,fill=color)
     def en(s,x,y,sz=24,color=TEXT,heavy=False,align="left"):
         s=str(s);x=x-width(s,sz,heavy,latin=True) if align=="right" else x
-        d.text((x,y),s,font=font(sz,heavy,latin=True),fill=color,direction="ltr" if features.check_feature("raqm") else None)
+        try:
+            if has_raqm:
+                d.text((x,y),s,font=font(sz,heavy,latin=True),fill=color,direction="ltr")
+            else:
+                d.text((x,y),s,font=font(sz,heavy,latin=True),fill=color)
+        except (KeyError, ValueError, TypeError, OSError):
+            d.text((x,y),s,font=font(sz,heavy,latin=True),fill=color)
     def rounded(rect,color="white",radius=19,outline=None):
         d.rounded_rectangle(rect,radius=radius,fill=color,outline=outline,width=1)
     # Top branding
