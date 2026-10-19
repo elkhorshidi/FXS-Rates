@@ -167,8 +167,8 @@ def make_png(result,market,market_time,market_source,volume_usd):
     # Header
     d.rectangle((0,0,W,188),fill=NAVY)
     rounded((50,48,60,135),TEAL,radius=3)
-    en("HELIOS",76,42,46,"white",True)
-    en("ASHA SPEED  /  FX INTELLIGENCE",77,103,18,"#A3CECD")
+    en("FXS Intelligence",76,49,39,"white",True)
+    en("Helios Ecosystem",77,106,20,"#A3CECD")
     fa("گزارش مقایسه نرخ رفع تعهد ارزی",1025,42,34,"white",True,min_x=465)
     fa("مرجع: آخرین استعلام‌های ثبت‌شده",1025,110,20,"#C2D4DF",min_x=560)
     d.rectangle((50,158,1030,164),fill=TEAL)
