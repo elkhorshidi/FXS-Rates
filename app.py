@@ -5,11 +5,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
-from fx_core import HEADERS, parse_rates, latest_rates, compare, fmt_toman, fmt_percent, route_label
+from fx_core import HEADERS, parse_rates, latest_rates, compare, fmt_toman, fmt_percent
+from sheet_reader import SPREADSHEET_ID, RATES_GID, download_public_sheet, SheetAccessError
 from report_image import make_png, formatted_time
 
-SHEET_ID = "1xckakJWtevb91dqlpbW504SbLg2irhhxlIRHIuTF3Ow"
+SHEET_ID = SPREADSHEET_ID
 st.set_page_config(page_title="Helios | FX Obligation", page_icon="💱", layout="wide")
 st.markdown("""
 <style>
@@ -29,14 +31,6 @@ div[data-testid="stDataFrame"]{direction:ltr}
 """,unsafe_allow_html=True)
 
 
-def secrets_dict(key: str):
-    try:
-        item = st.secrets.get(key)
-        return dict(item) if item else None
-    except (FileNotFoundError, KeyError, RuntimeError):
-        return None
-
-
 def simple_secret(key: str, fallback: str = ""):
     try:
         return str(st.secrets.get(key, fallback))
@@ -44,19 +38,9 @@ def simple_secret(key: str, fallback: str = ""):
         return fallback
 
 
-@st.cache_data(ttl=120,show_spinner=False)
-def load_live_rows(spreadsheet_id: str) -> list[list[object]]:
-    import gspread
-    from gspread.utils import ValueRenderOption
-    from google.oauth2.service_account import Credentials
-    sc = secrets_dict("google_service_account")
-    if not sc:
-        raise RuntimeError("کلید حساب سرویس Google هنوز در Secrets ثبت نشده است.")
-    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    creds = Credentials.from_service_account_info(sc, scopes=scopes)
-    gc = gspread.authorize(creds)
-    worksheet = gc.open_by_key(spreadsheet_id).worksheet("Rates_Log")
-    return worksheet.get("A1:H",value_render_option=ValueRenderOption.unformatted)
+@st.cache_data(ttl=90, show_spinner=False)
+def load_live_rows(spreadsheet_id: str, gid: int, published_csv_url: str):
+    return download_public_sheet(spreadsheet_id, gid, published_csv_url)
 
 
 def upload_to_rows(uploaded_file) -> list[list[object]]:
@@ -73,49 +57,66 @@ st.caption("منبع داده: Google Sheets → Rates_Log | نرخ‌ها به 
 
 with st.sidebar:
     st.subheader("تنظیمات داشبورد")
-    st.caption("نرخ‌ها در Google Sheets ثبت می‌شوند؛ این داشبورد فقط آن‌ها را می‌خواند.")
-    sheet_id = simple_secret("spreadsheet_id",SHEET_ID)
-    service_account = secrets_dict("google_service_account")
-    secret_password = simple_secret("dashboard_password")
-    if service_account:
-        if not secret_password:
-            st.error("برای حفظ محرمانگی نرخ‌ها، dashboard_password را در Secrets تنظیم کن.")
-            st.stop()
-        entered = st.text_input("رمز ورود داشبورد",type="password",placeholder="رمز ورود")
-        if not hmac.compare_digest(entered,secret_password):
-            st.info("برای مشاهده نرخ‌های خصوصی، رمز ورود را وارد کن.")
-            st.stop()
-        use_live = True
-    else:
-        use_live = False
-        st.info("برای اتصال خودکار، Secrets را تنظیم کن؛ تا آن موقع می‌توانی CSV شیت را بارگذاری کنی.")
+    st.caption("نرخ‌ها فقط در Google Sheets ذخیره می‌شوند. اتصال بدون Google Cloud است.")
+    sheet_id = simple_secret("spreadsheet_id", SHEET_ID)
+    try:
+        gid = int(simple_secret("rates_gid", str(RATES_GID)))
+    except ValueError:
+        st.error("شناسه تب Rates_Log در تنظیمات نامعتبر است.")
+        st.stop()
 
-    csv_file = st.file_uploader("CSV شیت (برای تست اختیاری)",type=["csv"])
-    volume = st.number_input("حجم مبنای مقایسه (دلار)",min_value=1, max_value=10000000000, value=100000, step=10000, format="%d")
-    if st.button("↻ به‌روزرسانی از شیت",use_container_width=True,disabled=not use_live):
+    secret_password = simple_secret("dashboard_password")
+    if secret_password:
+        entered = st.text_input("رمز ورود داشبورد", type="password", placeholder="رمز ورود")
+        if not hmac.compare_digest(entered, secret_password):
+            st.info("برای مشاهده داشبورد، رمز ورود را وارد کن.")
+            st.stop()
+
+    volume = st.number_input("حجم مبنای مقایسه (دلار)",min_value=1,
+                             max_value=10000000000,value=100000,step=10000,format="%d")
+
+    with st.expander("تنظیمات اتصال و روش جایگزین", expanded=False):
+        st.caption("در حالت معمول فقط Share → General access → Anyone with the link → Viewer کافی است.")
+        st.caption("اگر فقط Rates_Log را به صورت CSV منتشر کرده‌ای، لینک آن را اینجا وارد کن.")
+        manual_url = st.text_input("آدرس خروجی CSV منتشرشده (اختیاری)", value="",placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv")
+        csv_file = st.file_uploader("آپلود CSV (فقط برای حالت آفلاین)", type=["csv"])
+
+    published_csv_url = manual_url.strip() or simple_secret("published_csv_url")
+    refresh = st.button("↻ به‌روزرسانی از شیت", use_container_width=True)
+    if refresh:
         load_live_rows.clear()
-        st.rerun()
     st.markdown(f"[باز کردن شیت اصلی](https://docs.google.com/spreadsheets/d/{sheet_id}/edit)")
+
+# Rerun the whole app every 2 minutes, allowing cached data (90 s) to refresh.
+st_autorefresh(interval=120_000, key="helios_rates_refresh")
 
 if csv_file is not None:
     try:
         values = upload_to_rows(csv_file)
-        source_mode="CSV آپلودشده؛ اتصال زنده نیست"
+        source_mode = "فایل CSV آپلودشده (حالت آفلاین)"
     except (ValueError,UnicodeDecodeError) as exc:
         st.error(f"خواندن CSV ناموفق بود: {exc}")
         st.stop()
-elif use_live:
-    try:
-        values=load_live_rows(sheet_id)
-        source_mode="Google Sheets خصوصی | آخرین همگام‌سازی حداکثر ۲ دقیقه پیش"
-    except Exception as exc:
-        st.error("دریافت داده از Google Sheets ناموفق بود. دسترسی Viewer حساب سرویس و Secrets را بررسی کن.")
-        with st.expander("جزئیات فنی خطا"):
-            st.code(type(exc).__name__+": "+str(exc))
-        st.stop()
 else:
-    st.info("ابتدا فایل CSV شیت Rates_Log را بارگذاری کن یا دسترسی Google Sheets را از طریق Secrets فعال کن. هیچ نرخ ساختگی نمایش داده نمی‌شود.")
-    st.stop()
+    try:
+        with st.spinner("دریافت نرخ‌ها از Google Sheets…"):
+            values, used_url = load_live_rows(sheet_id, gid, published_csv_url)
+        source_mode = "Google Sheets آنلاین | به‌روزرسانی خودکار هر ۲ دقیقه (یا با دکمه)"
+        st.success("اتصال Google Sheets برقرار است؛ نرخ‌ها مستقیماً از Rates_Log خوانده شدند.")
+    except Exception as exc:
+        st.warning("هنوز امکان خواندن شیت از داخل Streamlit فراهم نشده است.")
+        st.markdown("""**برای اتصال بدون Google Cloud:**
+1. شیت را باز کن و روی **Share** بزن.
+2. زیر **General access** گزینه **Anyone with the link** و سطح **Viewer** را انتخاب و ذخیره کن.
+3. همین‌جا **به‌روزرسانی از شیت** را بزن. **هیچ Secrets یا Service Account لازم نیست.**
+
+**گزینه محدودتر:** از **File → Share → Publish to web** فقط تب `Rates_Log` را با فرمت CSV منتشر کن و لینک CSV را در «تنظیمات اتصال و روش جایگزین» بگذار.
+
+⚠️ این روش‌ها بخشی یا تمام داده‌های شیت را برای افراد دارای لینک (و در حالت انتشار، هر کسی که آدرس منتشرشده را بداند) قابل مشاهده می‌کنند. برای داده محرمانه مناسب نیستند.
+""")
+        with st.expander("جزئیات خطای اتصال"):
+            st.code(f"{type(exc).__name__}: {exc}")
+        st.stop()
 
 rates, warnings=parse_rates(values)
 if rates.empty:
