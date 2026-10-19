@@ -43,6 +43,7 @@ def font_set(weight):
         return ImageFont.truetype(path,size,layout_engine=ImageFont.Layout.RAQM if features.check_feature("raqm") else ImageFont.Layout.BASIC)
     return {sz:load(sz) for sz in range(14,55)}
 
+
 @lru_cache(maxsize=2)
 def latin_font_set(weight):
     """Arabic-only system fonts lack Latin digits/percent glyphs; always use Latin-capable fonts."""
@@ -53,6 +54,7 @@ def latin_font_set(weight):
     ]
     path=next((v for v in choices if Path(v).is_file()),get_font_path(weight))
     return {sz:ImageFont.truetype(path,sz) if path else ImageFont.load_default() for sz in range(14,55)}
+
 
 def _jalali_from_gregorian(gy,gm,gd):
     starts=[0,31,59,90,120,151,181,212,243,273,304,334]
@@ -66,6 +68,7 @@ def _jalali_from_gregorian(gy,gm,gd):
     else:jm,jd=7+(days-186)//30,1+(days-186)%30
     return jy,jm,jd
 
+
 def formatted_time(dt, digits="fa"):
     if dt is None:return "زمان نامشخص"
     try:
@@ -75,6 +78,9 @@ def formatted_time(dt, digits="fa"):
         s=f"{yy:04}/{mm:02}/{dd:02}  {ts.hour:02}:{ts.minute:02}"
         return s.translate(str.maketrans("0123456789","۰۱۲۳۴۵۶۷۸۹")) if digits=="fa" else s
     except (TypeError,ValueError,AttributeError):return "زمان نامشخص"
+
+
+
 
 def persian_weekday(dt):
     if dt is None:
@@ -86,6 +92,7 @@ def persian_weekday(dt):
     except (TypeError,ValueError,AttributeError):
         return ""
 
+
 def report_dayline(dt):
     stamp=formatted_time(dt,"fa")
     day=persian_weekday(dt)
@@ -93,8 +100,9 @@ def report_dayline(dt):
         return "زمان نامشخص"
     return f"{day} | {stamp}" if day else stamp
 
+
 def make_png(result,market,market_time,market_source,volume_usd):
-    """Draw a polished mobile report with 1–7 comparison rows."""
+    """Draw a polished mobile report aligned to the approved Helios sketch."""
     im=Image.new("RGB",(W,H),BG)
     d=ImageDraw.Draw(im)
     normal,bold=font_set("Regular"),font_set("Bold")
@@ -128,7 +136,7 @@ def make_png(result,market,market_time,market_source,volume_usd):
     def fa(s,x,y,sz=24,color=TEXT,heavy=False,min_x=0):
         s=str(s)
         f=font(sz,heavy)
-        while sz>15 and x-width(s,sz,heavy,"rtl")<min_x:
+        while sz>14 and x-width(s,sz,heavy,"rtl")<min_x:
             sz-=1; f=font(sz,heavy)
         if has_raqm:
             try:
@@ -154,7 +162,7 @@ def make_png(result,market,market_time,market_source,volume_usd):
         d.rounded_rectangle(rect,radius=radius,fill=color,outline=outline,width=1)
 
     NEG="#D94B4B"
-    POS_BG="#EDF8F4"
+    SOFT_GREEN="#EDF8F4"
 
     # Header
     d.rectangle((0,0,W,188),fill=NAVY)
@@ -162,18 +170,19 @@ def make_png(result,market,market_time,market_source,volume_usd):
     en("HELIOS",76,42,46,"white",True)
     en("ASHA SPEED  /  FX INTELLIGENCE",77,103,18,"#A3CECD")
     fa("گزارش مقایسه نرخ رفع تعهد ارزی",1025,42,34,"white",True,min_x=465)
-    fa("مرجع: آخرین استعلام‌های ثبت‌شده",1025,96,18,"#C2D4DF",min_x=560)
-    fa(report_dayline(market_time),1025,126,18,"#C2D4DF",min_x=520)
+    fa("مرجع: آخرین استعلام‌های ثبت‌شده",1025,110,20,"#C2D4DF",min_x=560)
     d.rectangle((50,158,1030,164),fill=TEAL)
 
-    # Market / date box
+    # top summary box
     rounded((49,212,1031,388),"white",23,LINE)
     d.line((540,238,540,366),fill=LINE,width=2)
+    # right: market
     fa("نرخ مبنای بازار آزاد",996,236,22,MUTED)
     en(fmt_toman(market),1000,272,50,NAVY,True,"right")
     fa("تومان به ازای دلار",995,341,18,MUTED)
+    # left: report date
     fa("تاریخ گزارش",502,236,22,MUTED)
-    fa(persian_weekday(market_time) or "—",503,279,26,NAVY,True,min_x=70)
+    fa(persian_weekday(market_time) or "—",503,279,28,NAVY,True,min_x=70)
     fa(formatted_time(market_time,"fa"),503,325,18,MUTED,min_x=70)
 
     fa("مقایسه مسیرهای رفع تعهد",1025,420,31,NAVY,True)
@@ -181,79 +190,74 @@ def make_png(result,market,market_time,market_source,volume_usd):
 
     result=result.head(7).reset_index(drop=True)
     count=len(result)
+
     table_top=524
-    row_h=84 if count<=3 else 74 if count<=5 else 66
-    header_h=70
+    row_h=86 if count<=3 else 76 if count<=5 else 68
+    header_h=72
     bottom=table_top+header_h+count*row_h+12
     rounded((50,table_top,1030,bottom),"white",19,LINE)
     d.rounded_rectangle((51,table_top+1,1029,table_top+header_h+10),radius=18,fill=NAVY)
-    d.rectangle((51,table_top+49,1029,table_top+header_h+8),fill=NAVY)
+    d.rectangle((51,table_top+50,1029,table_top+header_h+8),fill=NAVY)
 
-    # columns right edges (RTL)
-    x_label,x_eff,x_rawfee,x_gap,x_pct,x_time=(995,770,590,420,270,145)
-    for text,right in [("مسیر",x_label),("نرخ مؤثر",x_eff),("نرخ بانک / کارمزد",x_rawfee),("اختلاف تومان",x_gap),("فاصله ٪",x_pct),("زمان استعلام",x_time)]:
-        fa(text,right,table_top+17,18,"white",True)
+    # columns: path | announced | fee | effective | diff | %
+    x_path,x_ann,x_fee,x_eff,x_gap,x_pct=(986,802,640,478,304,150)
+    for text_col,right in [
+        ("مسیر",x_path),
+        ("نرخ اعلامی",x_ann),
+        ("کارمزد اظهار",x_fee),
+        ("نرخ مؤثر",x_eff),
+        ("اختلاف",x_gap),
+        ("٪",x_pct),
+    ]:
+        fa(text_col,right,table_top+18,18,"white",True)
 
     for i,(_,r) in enumerate(result.iterrows()):
         row_y=table_top+header_h+i*row_h
         if i==0:
-            d.rectangle((56,row_y+2,1024,row_y+row_h-3),fill=POS_BG)
+            d.rectangle((56,row_y+2,1024,row_y+row_h-3),fill=SOFT_GREEN)
             d.rounded_rectangle((1012,row_y+12,1020,row_y+row_h-12),radius=4,fill=TEAL)
-            fa("بهترین",972,row_y+10,14,TEAL,True,min_x=900)
         elif i%2==0:
             d.rectangle((56,row_y+2,1024,row_y+row_h-2),fill="#FAFCFD")
         if i:
             d.line((64,row_y,1016,row_y),fill=LINE,width=1)
 
         label=str(r["label"])
-        label=label if len(label)<=18 else label[:17]+"…"
-        fa(label,x_label,row_y+12,21,NAVY,True,min_x=790)
+        label=label if len(label)<=16 else label[:15]+"…"
+        fa(label,x_path,row_y+22,22,NAVY,True,min_x=820)
 
-        en(fmt_toman(float(r["effective_rate"])),x_eff,row_y+20,24,NAVY,True,"right")
-
-        raw=fmt_toman(float(r["raw_rate"]))
+        en(fmt_toman(float(r["raw_rate"])),x_ann,row_y+22,22,TEXT,True,"right")
         fee=float(r.get("fee_pct",0) or 0)
-        if str(r.get("kind",""))=="بانک":
-            detail=f"{raw} | {fee:.2f}%"
-        else:
-            detail=f"{raw} | بدون کارمزد"
-        fa(detail,x_rawfee,row_y+12,16,MUTED,False,min_x=470)
+        fee_text=(f"{fee:.2f}%" if str(r.get("kind",""))=="بانک" else "0")
+        en(fee_text,x_fee,row_y+22,22,TEXT,False,"right")
+        en(fmt_toman(float(r["effective_rate"])),x_eff,row_y+22,22,NAVY,True,"right")
 
         gap_t=-abs(float(r["gap_toman"]))
         gap_p=-abs(float(r["gap_pct"]))
-        en(fmt_toman(gap_t),x_gap,row_y+20,24,NEG,True,"right")
-        en(fmt_percent(gap_p),x_pct,row_y+20,24,NEG,True,"right")
-        en(formatted_time(r["timestamp"],"en"),x_time,row_y+20,16,MUTED,align="right")
+        en(fmt_toman(gap_t),x_gap,row_y+22,22,NEG,True,"right")
+        en(fmt_percent(gap_p),x_pct,row_y+22,22,NEG,True,"right")
 
-    # Summary card
+    # Best effective rate summary
     summary_top=bottom+28
     rounded((50,summary_top,1030,summary_top+126),"#F5FAF8",18,LINE)
-    fa("اختلاف بهترین مسیر با بازار آزاد",995,summary_top+16,20,TEAL,True)
-    best_gap_t=-abs(float(result.iloc[0]["gap_toman"])) if count else 0
-    best_gap_p=-abs(float(result.iloc[0]["gap_pct"])) if count else 0
-    fa("اختلاف تومانی",970,summary_top+56,18,MUTED)
-    en(f"{fmt_toman(best_gap_t)} تومان",980,summary_top+82,31,NEG,True,"right")
-    fa("فاصله درصدی",455,summary_top+56,18,MUTED)
-    en(fmt_percent(best_gap_p),460,summary_top+82,31,NEG,True,"right")
+    fa("بالاترین نرخ مؤثر",995,summary_top+16,22,TEAL,True)
+    best_label=str(result.iloc[0]["label"]) if count else "—"
+    best_rate=float(result.iloc[0]["effective_rate"]) if count else 0.0
+    fa(best_label,995,summary_top+58,31,NAVY,True,min_x=640)
+    en(fmt_toman(best_rate),470,summary_top+66,36,NAVY,True,"right")
 
-    # Bar comparison
-    show_bars = count <= 4
-    bar_top = summary_top + 188
-    if show_bars:
-        fa("مقایسه فاصله نرخ‌ها با بازار آزاد",1016,bar_top-30,20,NAVY,True,min_x=350)
-        limit=max(1.0,max(abs(float(x)) for x in result["gap_pct"]))
-        for i,(_,r) in enumerate(result.iterrows()):
-            yy=bar_top+i*47
-            fa(str(r["label"]),1015,yy-5,17,MUTED,False,min_x=775)
-            d.rounded_rectangle((350,yy+3,749,yy+15),radius=6,fill="#E8EEF2")
-            bw=max(4,round(min(1,abs(float(r["gap_pct"]))/limit)*399))
-            d.rounded_rectangle((749-bw,yy+3,749,yy+15),radius=6,fill=NEG)
-            en(fmt_percent(-abs(float(r["gap_pct"]))),322,yy-7,17,NEG,True,align="right")
-        footer_y=1186
-    else:
-        footer_y=1204
+    # Comparison bars
+    bar_top=summary_top+198
+    fa("مقایسه درصد فاصله مسیرها با بازار آزاد",1016,bar_top-30,20,NAVY,True,min_x=350)
+    limit=max(1.0,max(abs(float(x)) for x in result["gap_pct"])) if count else 1.0
+    for i,(_,r) in enumerate(result.iterrows()):
+        yy=bar_top+i*45
+        fa(str(r["label"]),1015,yy-5,17,MUTED,False,min_x=775)
+        d.rounded_rectangle((350,yy+3,749,yy+15),radius=6,fill="#E8EEF2")
+        bw=max(4,round(min(1,abs(float(r["gap_pct"]))/limit)*399))
+        d.rounded_rectangle((749-bw,yy+3,749,yy+15),radius=6,fill=NEG)
+        en(fmt_percent(-abs(float(r["gap_pct"]))),322,yy-7,17,NEG,True,align="right")
 
-    # Footer
+    footer_y=1204
     fa("اختلاف منفی یعنی نرخ مؤثر کمتر از بازار آزاد است.",1017,footer_y,19,TEXT,min_x=110)
     fa("نرخ‌ها استعلامی‌اند و ممکن است مربوط به ساعت‌های متفاوت باشند.",1017,footer_y+31,18,MUTED,min_x=90)
     d.line((52,1282,1028,1282),fill=LINE,width=2)
